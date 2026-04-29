@@ -1,0 +1,52 @@
+name: Ticketing System (Production)
+
+on:
+  push:
+    branches:
+      - prod
+    paths:
+      - 'code/TicketSystem.client/**'
+jobs:
+  deploy:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+            node-version: '18.x'
+
+      - name: Build Frontend
+        working-directory: code/TicketSystem.client
+        run: npm ci --force && npm run build:ssr
+
+
+      - name: Install Web Deploy
+        run: choco install webdeploy -y
+        shell: pwsh
+
+      - name: Deploy to Remote IIS Server
+        env:
+          IIS_SERVER: ${{ secrets.IIS_SERVER }}
+          IIS_USERNAME: ${{ secrets.IIS_USERNAME }}
+          IIS_PASSWORD: ${{ secrets.IIS_PASSWORD }}
+          FRONTEND_SITE_NAME: ${{ secrets.FRONTEND_SITE_NAME }}
+        run: |
+            $msdeployPath = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+            if (!(Test-Path $msdeployPath)) {
+                Write-Error "msdeploy.exe not found at $msdeployPath"
+                exit 1
+            }
+            # Deploy Frontend
+            $frontendSourcePath = "${{ github.workspace }}\code\TicketSystem.client\dist\ticket-client-app\"
+            Write-Host "Deploying frontend from $frontendSourcePath to site $env:FRONTEND_SITE_NAME on server $env:IIS_SERVER"
+            $frontendSourceArg = "-source:contentPath=" + $frontendSourcePath
+            $frontendDestArg = "-dest:contentPath=" + "$env:FRONTEND_SITE_NAME" + ",computerName=https://" + $env:IIS_SERVER + ":8172/msdeploy.axd,username=" + $env:IIS_USERNAME + ",password=" + $env:IIS_PASSWORD + ",authType=Basic"
+            $frontendSkip1 = "-skip:objectName=dirPath,absolutePath=node_modules"
+            $frontendSkip2 = "-skip:objectName=dirPath,absolutePath=.vscode"
+            & $msdeployPath -verb:sync $frontendSourceArg $frontendDestArg $frontendSkip1 $frontendSkip2 -enableRule:AppOffline -enableRule:DoNotDeleteRule -allowUntrusted
+        shell: pwsh

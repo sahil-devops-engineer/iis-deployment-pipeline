@@ -1,0 +1,63 @@
+name: Backend Deployment  (Deploy/Prod)
+
+on:
+  push:
+    branches: 
+     - prod
+    paths:
+      - 'code/app.backend/**'
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+      
+      - name: Restore dependencies
+        working-directory: code/app.backend
+        run: dotnet restore
+      
+      - name: Build Code
+        working-directory: code/app.backend
+        run: dotnet publish -r win-x64 --configuration Release
+        
+      - name: Show Build Output
+        run: ls code/app.backend/bin/Release/net8.0/win-x64/publish/
+
+      - name: List Published Files
+        run: |
+          Write-Host "Listing contents of publish folder:"
+          Get-ChildItem -Path code/app.backend/bin/Release/net8.0/win-x64/publish/ -Recurse -Force
+        shell: pwsh
+
+      - name: Install Web Deploy
+        run: choco install webdeploy -y
+        shell: pwsh
+
+      - name: Deploy to Remote IIS Server
+        env:
+          IIS_SERVER: ${{ secrets.IIS_SERVER }}
+          IIS_USERNAME: ${{ secrets.IIS_USERNAME }}
+          IIS_PASSWORD: ${{ secrets.IIS_PASSWORD }}
+          BACKEND_SITE_NAME: ${{ secrets.BACKEND_SITE_NAME }}
+        run: |
+          $msdeployPath = "C:\Program Files\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          if (!(Test-Path $msdeployPath)) {
+              Write-Error "msdeploy.exe not found at $msdeployPath"
+              exit 1
+          }
+          # Deploy Backend
+          $backendSourcePath = "${{ github.workspace }}\code\app.backend\bin\Release\net8.0\win-x64\publish"
+          Write-Host "Deploying backend from $backendSourcePath to site $env:BACKEND_SITE_NAME on server $env:IIS_SERVER"
+          $backendSourceArg = "-source:contentPath=" + $backendSourcePath
+          $backendDestArg = "-dest:contentPath=" + $env:BACKEND_SITE_NAME + ",computerName=https://" + $env:IIS_SERVER + ":8172/msdeploy.axd,username=" + $env:IIS_USERNAME + ",password=" + $env:IIS_PASSWORD + ",authType=Basic"
+          $backendSkip1 = "-skip:objectName=filePath,absolutePath=appsettings\.json"
+          $backendSkip2 = "-skip:objectName=filePath,absolutePath=appsettings\.Development\.json"
+          $backendSkip3 = "-skip:objectName=filePath,absolutePath=appsettings\.Production\.json"
+          & $msdeployPath -verb:sync $backendSourceArg $backendDestArg $backendSkip1 $backendSkip2 $backendSkip3 -enableRule:AppOffline -enableRule:DoNotDeleteRule -allowUntrusted
+        shell: pwsh
